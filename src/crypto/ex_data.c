@@ -121,16 +121,16 @@
 #include "internal.h"
 
 
+DEFINE_STACK_OF(CRYPTO_EX_DATA_FUNCS)
+
 struct crypto_ex_data_func_st {
   long argl;  /* Arbitary long */
   void *argp; /* Arbitary void pointer */
   CRYPTO_EX_free *free_func;
-  CRYPTO_EX_dup *dup_func;
 };
 
 int CRYPTO_get_ex_new_index(CRYPTO_EX_DATA_CLASS *ex_data_class, int *out_index,
-                            long argl, void *argp, CRYPTO_EX_dup *dup_func,
-                            CRYPTO_EX_free *free_func) {
+                            long argl, void *argp, CRYPTO_EX_free *free_func) {
   CRYPTO_EX_DATA_FUNCS *funcs;
   int ret = 0;
 
@@ -142,7 +142,6 @@ int CRYPTO_get_ex_new_index(CRYPTO_EX_DATA_CLASS *ex_data_class, int *out_index,
 
   funcs->argl = argl;
   funcs->argp = argp;
-  funcs->dup_func = dup_func;
   funcs->free_func = free_func;
 
   CRYPTO_STATIC_MUTEX_lock_write(&ex_data_class->lock);
@@ -163,7 +162,7 @@ int CRYPTO_get_ex_new_index(CRYPTO_EX_DATA_CLASS *ex_data_class, int *out_index,
   ret = 1;
 
 err:
-  CRYPTO_STATIC_MUTEX_unlock(&ex_data_class->lock);
+  CRYPTO_STATIC_MUTEX_unlock_write(&ex_data_class->lock);
   return ret;
 }
 
@@ -217,7 +216,7 @@ static int get_func_pointers(STACK_OF(CRYPTO_EX_DATA_FUNCS) **out,
   if (n > 0) {
     *out = sk_CRYPTO_EX_DATA_FUNCS_dup(ex_data_class->meth);
   }
-  CRYPTO_STATIC_MUTEX_unlock(&ex_data_class->lock);
+  CRYPTO_STATIC_MUTEX_unlock_read(&ex_data_class->lock);
 
   if (n > 0 && *out == NULL) {
     OPENSSL_PUT_ERROR(CRYPTO, ERR_R_MALLOC_FAILURE);
@@ -229,36 +228,6 @@ static int get_func_pointers(STACK_OF(CRYPTO_EX_DATA_FUNCS) **out,
 
 void CRYPTO_new_ex_data(CRYPTO_EX_DATA *ad) {
   ad->sk = NULL;
-}
-
-int CRYPTO_dup_ex_data(CRYPTO_EX_DATA_CLASS *ex_data_class, CRYPTO_EX_DATA *to,
-                       const CRYPTO_EX_DATA *from) {
-  if (from->sk == NULL) {
-    /* In this case, |from| is blank, which is also the initial state of |to|,
-     * so there's nothing to do. */
-    return 1;
-  }
-
-  STACK_OF(CRYPTO_EX_DATA_FUNCS) *func_pointers;
-  if (!get_func_pointers(&func_pointers, ex_data_class)) {
-    return 0;
-  }
-
-  size_t i;
-  for (i = 0; i < sk_CRYPTO_EX_DATA_FUNCS_num(func_pointers); i++) {
-    CRYPTO_EX_DATA_FUNCS *func_pointer =
-        sk_CRYPTO_EX_DATA_FUNCS_value(func_pointers, i);
-    void *ptr = CRYPTO_get_ex_data(from, i + ex_data_class->num_reserved);
-    if (func_pointer->dup_func) {
-      func_pointer->dup_func(to, from, &ptr, i + ex_data_class->num_reserved,
-                             func_pointer->argl, func_pointer->argp);
-    }
-    CRYPTO_set_ex_data(to, i + ex_data_class->num_reserved, ptr);
-  }
-
-  sk_CRYPTO_EX_DATA_FUNCS_free(func_pointers);
-
-  return 1;
 }
 
 void CRYPTO_free_ex_data(CRYPTO_EX_DATA_CLASS *ex_data_class, void *obj,
@@ -274,8 +243,7 @@ void CRYPTO_free_ex_data(CRYPTO_EX_DATA_CLASS *ex_data_class, void *obj,
     return;
   }
 
-  size_t i;
-  for (i = 0; i < sk_CRYPTO_EX_DATA_FUNCS_num(func_pointers); i++) {
+  for (size_t i = 0; i < sk_CRYPTO_EX_DATA_FUNCS_num(func_pointers); i++) {
     CRYPTO_EX_DATA_FUNCS *func_pointer =
         sk_CRYPTO_EX_DATA_FUNCS_value(func_pointers, i);
     if (func_pointer->free_func) {

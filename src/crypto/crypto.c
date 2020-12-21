@@ -21,9 +21,11 @@
 
 #if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_STATIC_ARMCAP) && \
     (defined(OPENSSL_X86) || defined(OPENSSL_X86_64) || \
-     defined(OPENSSL_ARM) || defined(OPENSSL_AARCH64))
-/* x86, x86_64 and the ARMs need to record the result of a cpuid call for the
- * asm to work correctly, unless compiled without asm code. */
+     defined(OPENSSL_ARM) || defined(OPENSSL_AARCH64) || \
+     defined(OPENSSL_PPC64LE))
+/* x86, x86_64, the ARMs and ppc64le need to record the result of a
+ * cpuid/getauxval call for the asm to work correctly, unless compiled without
+ * asm code. */
 #define NEED_CPUID
 
 #else
@@ -47,6 +49,7 @@
  * far, the init constructor function only sets the capability variables. */
 
 #if defined(OPENSSL_X86) || defined(OPENSSL_X86_64)
+
 /* This value must be explicitly initialised to zero in order to work around a
  * bug in libtool or the linker on OS X.
  *
@@ -55,6 +58,11 @@
  * initialising it to zero, it becomes a "data symbol", which isn't so
  * affected. */
 uint32_t OPENSSL_ia32cap_P[4] = {0};
+
+#elif defined(OPENSSL_PPC64LE)
+
+unsigned long OPENSSL_ppc64le_hwcap2 = 0;
+
 #elif defined(OPENSSL_ARM) || defined(OPENSSL_AARCH64)
 
 #include <openssl/arm_arch.h>
@@ -65,16 +73,16 @@ uint32_t OPENSSL_armcap_P =
 #if defined(OPENSSL_STATIC_ARMCAP_NEON) || defined(__ARM_NEON__)
     ARMV7_NEON |
 #endif
-#if defined(OPENSSL_STATIC_ARMCAP_AES)
+#if defined(OPENSSL_STATIC_ARMCAP_AES) || defined(__ARM_FEATURE_CRYPTO)
     ARMV8_AES |
 #endif
-#if defined(OPENSSL_STATIC_ARMCAP_SHA1)
+#if defined(OPENSSL_STATIC_ARMCAP_SHA1) || defined(__ARM_FEATURE_CRYPTO)
     ARMV8_SHA1 |
 #endif
-#if defined(OPENSSL_STATIC_ARMCAP_SHA256)
+#if defined(OPENSSL_STATIC_ARMCAP_SHA256) || defined(__ARM_FEATURE_CRYPTO)
     ARMV8_SHA256 |
 #endif
-#if defined(OPENSSL_STATIC_ARMCAP_PMULL)
+#if defined(OPENSSL_STATIC_ARMCAP_PMULL) || defined(__ARM_FEATURE_CRYPTO)
     ARMV8_PMULL |
 #endif
     0;
@@ -85,6 +93,11 @@ uint32_t OPENSSL_armcap_P = 0;
 
 #endif
 
+#if defined(BORINGSSL_FIPS)
+/* In FIPS mode, the power-on self-test function calls |CRYPTO_library_init|
+ * because we have to ensure that CPUID detection occurs first. */
+#define BORINGSSL_NO_STATIC_INITIALIZER
+#endif
 
 #if defined(OPENSSL_WINDOWS) && !defined(BORINGSSL_NO_STATIC_INITIALIZER)
 #define OPENSSL_CDECL __cdecl
@@ -123,6 +136,22 @@ void CRYPTO_library_init(void) {
 #endif
 }
 
+int CRYPTO_is_confidential_build(void) {
+#if defined(BORINGSSL_CONFIDENTIAL)
+  return 1;
+#else
+  return 0;
+#endif
+}
+
+int CRYPTO_has_asm(void) {
+#if defined(OPENSSL_NO_ASM)
+  return 0;
+#else
+  return 1;
+#endif
+}
+
 const char *SSLeay_version(int unused) {
   return "BoringSSL";
 }
@@ -136,5 +165,9 @@ int CRYPTO_malloc_init(void) {
 }
 
 void ENGINE_load_builtin_engines(void) {}
+
+int ENGINE_register_all_complete(void) {
+  return 1;
+}
 
 void OPENSSL_load_builtin_modules(void) {}

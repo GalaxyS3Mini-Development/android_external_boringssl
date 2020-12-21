@@ -9,11 +9,12 @@ add_library(
   a_sign.c
   a_strex.c
   a_verify.c
+  algorithm.c
   asn1_gen.c
   by_dir.c
   by_file.c
   i2d_pr.c
-  pkcs7.c
+  rsa_pss.c
   t_crl.c
   t_req.c
   t_x509.c
@@ -38,7 +39,6 @@ add_library(
   x509name.c
   x509rset.c
   x509spki.c
-  x509type.c
   x_algor.c
   x_all.c
   x_attrib.c
@@ -55,14 +55,3 @@ add_library(
   x_x509.c
   x_x509a.c
 )
-
-add_executable(
-  pkcs7_test
-
-  pkcs7_test.c
-
-  $<TARGET_OBJECTS:test_support>
-)
-
-target_link_libraries(pkcs7_test crypto)
-add_dependencies(all_tests pkcs7_test)

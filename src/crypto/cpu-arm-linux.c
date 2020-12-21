@@ -64,12 +64,13 @@ static ssize_t read_eintr(int fd, void *out, size_t len) {
 /* read_full reads exactly |len| bytes from |fd| to |out|. On error or end of
  * file, it returns zero. */
 static int read_full(int fd, void *out, size_t len) {
+  char *outp = out;
   while (len > 0) {
-    ssize_t ret = read_eintr(fd, out, len);
+    ssize_t ret = read_eintr(fd, outp, len);
     if (ret <= 0) {
       return 0;
     }
-    out += ret;
+    outp += ret;
     len -= ret;
   }
   return 1;
@@ -160,7 +161,7 @@ typedef struct {
 
 static int STRING_PIECE_equals(const STRING_PIECE *a, const char *b) {
   size_t b_len = strlen(b);
-  return a->len == b_len && memcmp(a->data, b, b_len) == 0;
+  return a->len == b_len && OPENSSL_memcmp(a->data, b, b_len) == 0;
 }
 
 /* STRING_PIECE_split finds the first occurence of |sep| in |in| and, if found,
@@ -168,7 +169,7 @@ static int STRING_PIECE_equals(const STRING_PIECE *a, const char *b) {
  * returns one if |sep| was found and zero otherwise. */
 static int STRING_PIECE_split(STRING_PIECE *out_left, STRING_PIECE *out_right,
                               const STRING_PIECE *in, char sep) {
-  const char *p = memchr(in->data, sep, in->len);
+  const char *p = OPENSSL_memchr(in->data, sep, in->len);
   if (p == NULL) {
     return 0;
   }
@@ -253,6 +254,28 @@ static unsigned long get_hwcap_cpuinfo(const STRING_PIECE *cpuinfo) {
   return 0;
 }
 
+static unsigned long get_hwcap2_cpuinfo(const STRING_PIECE *cpuinfo) {
+  STRING_PIECE features;
+  if (!extract_cpuinfo_field(&features, cpuinfo, "Features")) {
+    return 0;
+  }
+
+  unsigned long ret = 0;
+  if (has_list_item(&features, "aes")) {
+    ret |= HWCAP2_AES;
+  }
+  if (has_list_item(&features, "pmull")) {
+    ret |= HWCAP2_PMULL;
+  }
+  if (has_list_item(&features, "sha1")) {
+    ret |= HWCAP2_SHA1;
+  }
+  if (has_list_item(&features, "sha2")) {
+    ret |= HWCAP2_SHA2;
+  }
+  return ret;
+}
+
 /* has_broken_neon returns one if |in| matches a CPU known to have a broken
  * NEON unit. See https://crbug.com/341598. */
 static int has_broken_neon(const STRING_PIECE *cpuinfo) {
@@ -305,21 +328,27 @@ void OPENSSL_cpuid_setup(void) {
   if (hwcap & HWCAP_NEON) {
     OPENSSL_armcap_P |= ARMV7_NEON;
 
+    /* Some ARMv8 Android devices don't expose AT_HWCAP2. Fall back to
+     * /proc/cpuinfo. See https://crbug.com/596156. */
+    unsigned long hwcap2 = 0;
     if (getauxval != NULL) {
-      unsigned long hwcap2 = getauxval(AT_HWCAP2);
+      hwcap2 = getauxval(AT_HWCAP2);
+    }
+    if (hwcap2 == 0) {
+      hwcap2 = get_hwcap2_cpuinfo(&cpuinfo);
+    }
 
-      if (hwcap2 & HWCAP2_AES) {
-        OPENSSL_armcap_P |= ARMV8_AES;
-      }
-      if (hwcap2 & HWCAP2_PMULL) {
-        OPENSSL_armcap_P |= ARMV8_PMULL;
-      }
-      if (hwcap2 & HWCAP2_SHA1) {
-        OPENSSL_armcap_P |= ARMV8_SHA1;
-      }
-      if (hwcap2 & HWCAP2_SHA2) {
-        OPENSSL_armcap_P |= ARMV8_SHA256;
-      }
+    if (hwcap2 & HWCAP2_AES) {
+      OPENSSL_armcap_P |= ARMV8_AES;
+    }
+    if (hwcap2 & HWCAP2_PMULL) {
+      OPENSSL_armcap_P |= ARMV8_PMULL;
+    }
+    if (hwcap2 & HWCAP2_SHA1) {
+      OPENSSL_armcap_P |= ARMV8_SHA1;
+    }
+    if (hwcap2 & HWCAP2_SHA2) {
+      OPENSSL_armcap_P |= ARMV8_SHA256;
     }
   }
 
